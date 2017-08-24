@@ -21,7 +21,7 @@ module Fluent
     K8_POD_CA_CERT = 'ca.crt'
     K8_POD_TOKEN = 'token'
 
-    Fluent::Plugin.register_filter('kubernetes_metadata', self)
+    Fluent::Plugin.register_filter('kubernetes_metadata_logdir', self)
 
     config_param :kubernetes_url, :string, default: nil
     config_param :cache_size, :integer, default: 1000
@@ -34,7 +34,7 @@ module Fluent
     config_param :verify_ssl, :bool, default: true
     config_param :tag_to_kubernetes_name_regexp,
                  :string,
-                 :default => 'var\.log\.containers\.(?<pod_name>[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?<namespace>[^_]+)_(?<container_name>.+)-(?<docker_id>[a-z0-9]{64})\.log$'
+                 :default => 'var\.log\.containers\.(?<pod_name>[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?<namespace>[^_]+)_(?<container_name>.+)-(?<filetag>[a-z0-9]+)\.(?<filename>.*)$'
     config_param :bearer_token_file, :string, default: nil
     config_param :merge_json_log, :bool, default: true
     config_param :preserve_json_log, :bool, default: true
@@ -144,6 +144,7 @@ module Fluent
       if @include_namespace_metadata
         @namespace_cache = LruRedux::TTL::ThreadSafeCache.new(@cache_size, @cache_ttl)
       end
+      p @tag_to_kubernetes_name_regexp
       @tag_to_kubernetes_name_regexp_compiled = Regexp.compile(@tag_to_kubernetes_name_regexp)
       @container_name_to_kubernetes_regexp_compiled = Regexp.compile(@container_name_to_kubernetes_regexp)
 
@@ -268,12 +269,10 @@ module Fluent
       new_es = MultiEventStream.new
 
       match_data = tag.match(@tag_to_kubernetes_name_regexp_compiled)
-
       if match_data
         metadata = {
-          'docker' => {
-            'container_id' => match_data['docker_id']
-          },
+          'filename' => match_data['filename'],
+          # 'filetag' => match_data['filetag'],
           'kubernetes' => get_metadata_for_record(
             match_data['namespace'],
             match_data['pod_name'],
